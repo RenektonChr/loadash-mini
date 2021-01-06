@@ -40,6 +40,28 @@
     uint8ClampedTag = '[object Uint8ClampedArray]',
     uint16Tag = '[object Uint16Array]',
     uint32Tag = '[object Uint32Array]';
+  
+  // 正则表达式
+  var reIsUint = /^(?:0|[1-9]\d*)$/;
+  
+  var typedArrayTags = {};
+    typedArrayTags[float32Tag] = typedArrayTags[float64Tag] =
+    typedArrayTags[int8Tag] = typedArrayTags[int16Tag] =
+    typedArrayTags[int32Tag] = typedArrayTags[uint8Tag] =
+    typedArrayTags[uint8ClampedTag] = typedArrayTags[uint16Tag] =
+    typedArrayTags[uint32Tag] = true;
+    typedArrayTags[argsTag] = typedArrayTags[arrayTag] =
+    typedArrayTags[arrayBufferTag] = typedArrayTags[boolTag] =
+    typedArrayTags[dataViewTag] = typedArrayTags[dateTag] =
+    typedArrayTags[errorTag] = typedArrayTags[funcTag] =
+    typedArrayTags[mapTag] = typedArrayTags[numberTag] =
+    typedArrayTags[objectTag] = typedArrayTags[regexpTag] =
+    typedArrayTags[setTag] = typedArrayTags[stringTag] =
+    typedArrayTags[weakMapTag] = false;
+
+  var freeGlobal = typeof global == 'object' && global && global.Object === Object && global;
+  
+  var freeSelf = typeof self == 'object' && self && self.Object === Object && self;
 
   // 用作全局对象的引用
   var root = freeGlobal || freeSelf || Function('return this')();
@@ -49,6 +71,59 @@
   var freeModule = freeExports && typeof module == 'object' && module && !module.nodeType && module;
 
   var moduleExports = freeModule && freeModule.exports === freeExports;
+
+  var freeProcess = moduleExports && freeGlobal.process;
+
+  var nodeUtil = (function() {
+    try {
+      var types = freeModule && freeModule.require && freeModule.require('util').types;
+
+      if(types) {
+        return types;
+      }
+
+      return freeProcess && freeProcess.binding && freeProcess.binding('util');
+    }catch(e) {}
+  }());
+
+  var nodeIsTypedArray = nodeUtil && nodeUtil.isTypedArray;
+
+  function baseUnary(func) {
+    return function(value) {
+      return func(value);
+    };
+  }
+
+  function baseTimes(n, iteratee) {
+    var index = -1,
+        result = Array(n);
+    
+    while (++index < n) {
+      result[index] = iteratee(index)
+    }
+    return result;
+  }
+
+  function overArg(func, transform) {
+    return function(arg) {
+      return func(transform(arg));
+    }
+  }
+
+  function arrayFilter(array, predicate) {
+    var index = -1,
+        length = array == null ? 0 : array.length,
+        resIndex = 0,
+        result = [];
+    
+    while (++index < length) {
+      var value = array[index];
+      if (predicate(value, index, array)) {
+        result[resIndex++] = value;
+      }
+    }
+    return result;
+  }
 
   var runInContext = (function runInContext(context) {
     // 指定上下文 runInContext函数不传参数时为this
@@ -66,18 +141,24 @@
         Symbol = context.Symbol,
         propertyIsEnumerable = objectProto.propertyIsEnumerable,
         symToStringTag = Symbol ? Symbol.toStringTag : undefined;
-    
+
     // 用作检查对象自身的属性
     var hasOwnProperty = objectProto.hasOwnProperty;
 
     var nativeObjectToString = objectProto.toString;
 
     var nativeIsBuffer = Buffer ? Buffer.isBuffer : undefined,
+        nativeKeys = overArg(Object.keys, Object)
 
     // lodash函数
     function lodash(value) {
 
       return new LodashWrapper(value);
+    }
+
+    function baseIsTypedArray(value) {
+      return isObjectLike(value) && 
+        isLength(value.length) && !!typedArrayTags[baseGetTag(value)]
     }
 
     function baseGetTag(value) {
@@ -130,6 +211,12 @@
       return tag == funcTag || tag == genTag || tag == asyncTag || tag == proxyTag;
     }
 
+    function baseFunctions(object, props) {
+      return arrayFilter(props, function() {
+        return isFunction(object[key])
+      })
+    }
+
     // 检查value是否为类数组
     function isArrayLike(value) {
       return value != null && isLength(value.length) && !isFunction(value);
@@ -157,16 +244,58 @@
         isArg = !isArr && isArguments(value),
         isBuff = !isArr && !isArg && isBuffer(value),
         isType = !isArr && !isArg && !isBuff && isTypedArray(value),
+        skipIndexes = isArr || isArg || isBuff || isType,
+        result = skipIndexes ? baseTimes(value.length, String) : [],
+        length = result.length;
+
+        for (var key in value) {
+          if((inherited || hasOwnProperty.call(value, key)) && 
+              !(skipIndexes && (
+                key == 'length' || 
+                (isBuff && (key == 'offset' || key == 'parent')) || 
+                (isType && (key == 'buffer' || key == 'byteLength' || key == 'byteOffset')) ||
+                isIndex(key, length)
+              ))) {
+            result.push(key);
+          }
+        }
+        return result;
     }
 
     var isBuffer = nativeIsBuffer || stubFalse;
 
     function baseKeys(object) {
+      if(!isPrototype(object)) {
+        return nativeKeys(object);
+      }
+      var result = [];
+      for (var key in Object(object)) {
+        if(hasOwnProperty.call(object, key) && key != 'constructor') {
+          result.push(key);
+        }
+      }
+      return result;
+    }
 
+    function isPrototype(value) {
+      var Ctor = value && value.constructor,
+          proto = (typeof Ctor === 'function' && Ctor.prototype) || objectProto;
+
+      return value === proto
     }
 
     function keys(object) {
       return isArrayLike(object) ? arrayLikeKeys(object) : baseKeys(object);
+    }
+
+    function isIndex(value, length) {
+      var type = typeof value;
+      length = length == null ? MAX_SAFE_INTEGER : length;
+
+      return !!length && 
+        (type == 'number' ||
+          (type != 'symbol' && reIsUint.test(value))
+        ) && (value > -1 && value % 1 == 0 && value < length);
     }
 
     var basecreate = (function () {
@@ -190,8 +319,16 @@
 
     // mixin混入
     function mixin(object, source, options) {
-      var props = keys(source),   // keys是一个工具函数
-
+      var props = keys(source),
+          methodNames = baseFunctions(source, props);
+      
+      if (options == null &&
+          !(isObject(source) && (methodNames.length || !props.length))) {
+            options = source;
+            source = object;
+            object = this;
+            methodNames = baseFunctions(source, keys(source));
+      }
     }
 
     // 空函数
