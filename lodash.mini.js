@@ -401,8 +401,31 @@
     LodashWrapper.prototype = basecreate(baseLodash.prototype);
     LodashWrapper.prototype.constructor = LodashWrapper;
 
+    // lodash.after = after;
+    // code ... 等 153 个支持链式调用的方法
+
+    // 把lodash上的静态方法添加到lodash.prototype上
+    mixin(lodash, lodash);
+
+    // lodash.add = add
+    // code ... 等 152 个不支持链式调用的方法
+
+    // 这里其实就是过滤 after 等支持链式调用的方法，获取到 lodash 上的 add 等 添加到lodash.prototype 上。
+    mixin(lodash, (function() {
+      var source = {};
+      baseForOwn(lodash, function(func, methodName) {
+        if(!hasOwnProperty.call(lodash.prototype, methodName)) {
+          source[methodName] = func;
+        }
+      });
+      return source;
+      // 最后一个参数{ 'chain': false }，表明了不支持链式调用。
+    }()), { 'chain': false })
+    
     return lodash
   })
+
+
 
   // 暴露lodash，并定义别名_
   var _ = runInContext();
