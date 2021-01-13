@@ -317,6 +317,18 @@
       }
     }());
 
+    // 向数组中push元素
+    function arrayPush(array, values) {
+      var index = -1,
+          length = values.length,
+          offset = array.length;
+
+      while(++index < length) {
+        array[offset + index] = values[index];
+      }
+      return array;
+    }
+
     // mixin混入
     function mixin(object, source, options) {
       var props = keys(source),
@@ -329,6 +341,42 @@
             object = this;
             methodNames = baseFunctions(source, keys(source));
       }
+
+      var chain = !(isObject(options) && 'chain' in options) || !!options.chain,
+          isFunc = isFunction(object);
+      
+      arrayEach(methodNames, function(methodName) {
+        var func = source[methodName];
+        object[methodName] = func;
+        if(isFunc) {
+          object.prototype[methodName] = function() {
+            var chainAll = this.__chain__;
+            if (chain || chainAll) {
+              var result = object(this.__wrapped__),
+                  actions = result.__actions__ = copyArray(this.__actions__);
+
+              actions.push({ 'func': func, 'args': arguments, 'thisArg': object });
+              result.__chain__ = chainAll;
+              return result;
+            }
+            return func.apply(object, arrayPush([[this.value()], arguments]))
+          };
+        }
+      });
+
+      return object;
+    }
+
+    function copyArray(source, array) {
+      var index = -1,
+          length = source.length;
+      
+      array || (array = Array(length));
+      while(++index < length) {
+        array[index] = source[index];
+      }
+
+      return array
     }
 
     // 空函数
@@ -338,7 +386,7 @@
 
     function LodashWrapper(value, chainAll) {
       this.__wrapped__ = value;   // 存放参数value
-      this.actions__ = [];  // 存放待执行的函数体func， 函数参数 args，函数执行的this 指向 thisArg。
+      this.__actions__ = [];  // 存放待执行的函数体func， 函数参数 args，函数执行的this 指向 thisArg。
       this.__chain__ = !!chainAll;  // chainAll值为undefined，两次取反转换成布尔值，默认不支持链式调用。
       this.__index__ = 0;   // 索引值默认为0
       this.values__ = undefined;    // 主要是clone是应用（暂时不太理解）
