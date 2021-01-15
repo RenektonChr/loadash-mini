@@ -1,9 +1,14 @@
+const { toInteger } = require("lodash");
+
 ; (function () {
   // 定义一些JS中的常量
   var INFINITY = 1 / 0,
-    MAX_SAFE_INTEGER = 9007199254740991,
-    MAX_INTEGER = 1.7976931348623157e+308,
-    NAN = 0 / 0;
+      MAX_SAFE_INTEGER = 9007199254740991,
+      MAX_INTEGER = 1.7976931348623157e+308,
+      NAN = 0 / 0;
+
+  var CORE_ERROR_TEXT = 'Unsupported core-js use. Try https://npms.io/search?q=ponyfill.',
+      FUNC_ERROR_TEXT = 'Expected a function';
 
   // 定义一些JS中的类型
   var argsTag = '[object Arguments]',
@@ -134,7 +139,8 @@
 
     // 内建构造函数的引用
     var Object = context.Object,
-        Array = context.Array;
+        Array = context.Array,
+        TypeError = context.TypeError;
 
     // 内建值的引用
     var Buffer = moduleExports ? context.Buffer : undefined,
@@ -331,25 +337,50 @@
 
     // mixin混入
     function mixin(object, source, options) {
+      // props为source对象中可枚举的属性
       var props = keys(source),
+          // source对象中的方法名称数组
           methodNames = baseFunctions(source, props);
       
+      /**
+       * 1. 如果options没有传，则为undefined，undefined == null为true
+       * 2. 并且如果source不为对象或者不是函数
+       * 3. 并且source对象的函数长度或者source对象的属性长度不为0
+       */
       if (options == null &&
           !(isObject(source) && (methodNames.length || !props.length))) {
+            // 把options赋值为source
             options = source;
+            // 把source赋值为object
             source = object;
+            // 把 object 赋值为 this 也就是 window
             object = this;
+            // 获取到所有的方法名称数组 
             methodNames = baseFunctions(source, keys(source));
       }
 
+      //  判断是否支持链式调用
+      /**
+       * 1. options不是对象或者不是函数，是null或者其他值
+       * 2. 判断options是否是对象或者函数，如果不是或者函数则不会执行 'chain' in options 也就不会报错
+       * 3. 且chain在options的对象或者原型链中
+       * 4. 或者options.chain转布尔值
+       */
       var chain = !(isObject(options) && 'chain' in options) || !!options.chain,
+          // object是函数
           isFunc = isFunction(object);
       
+      // 循环方法名称数组
       arrayEach(methodNames, function(methodName) {
+        // 函数本身
         var func = source[methodName];
+        // object通常是lodash
         object[methodName] = func;
         if(isFunc) {
+          // 如果object是函数 赋值到  object prototype  上，通常是lodash
           object.prototype[methodName] = function() {
+            // 实例上的__chain__属性，是否支持链式调用
+            // 这里的 this 是 new LodashWrapper 实例 类似如下
             var chainAll = this.__chain__;
             if (chain || chainAll) {
               var result = object(this.__wrapped__),
@@ -359,6 +390,7 @@
               result.__chain__ = chainAll;
               return result;
             }
+            // 把当前实例的 value 和 arguments 对象 传递给 func 函数作为参数调用。返回调用结果。
             return func.apply(object, arrayPush([[this.value()], arguments]))
           };
         }
@@ -401,7 +433,28 @@
     LodashWrapper.prototype = basecreate(baseLodash.prototype);
     LodashWrapper.prototype.constructor = LodashWrapper;
 
-    // lodash.after = after;
+    // lodash的惰性求职求值
+    function LazyWrapper(value) {
+      this.__wrapped__ = value;
+      this.__actions__ = [];
+      this.__dir__ = 1;
+      this.__filtered__ = false;
+      this.__iteratees__ = [];
+      this.__takeCount__ = MAX_ARRAY_LENGTH;
+      this.__views__ = [];
+    }
+    function after (n, func) {
+      if (typeof func != 'function') {
+        throw new TypeError(FUNC_ERROR_TEXT);
+      }
+      n = toInteger(n);
+      return function() {
+        if (--n < 1) {
+          return func.apply(this, arguments)
+        }
+      }
+    }
+    lodash.after = after;
     // code ... 等 153 个支持链式调用的方法
 
     // 把lodash上的静态方法添加到lodash.prototype上
